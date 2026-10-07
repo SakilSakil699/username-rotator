@@ -6,9 +6,8 @@
           "channel_id": -1002461966751,
           "interval": 3600,
           "enabled": true,
-          "_note": "ACTIVE - Channel 1 (Friends)",
+          "_note": "ACTIVE - Friends (Channel 1)",
           "pool": [
-            "sakilAnowar1",
             "sakilAnowar2",
             "sakilAnowar3",
             "sakilAnowar4",

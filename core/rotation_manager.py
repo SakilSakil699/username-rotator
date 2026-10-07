@@ -1,7 +1,13 @@
 """
 🔄 Rotation Manager — Multi-Account Engine
-Har account + channel ka apna independent loop
-Peer id invalid fix: dialogs se channel resolve karta hai
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Fixes:
+  • Peer id invalid  → dialogs se cache
+  • USERNAME_NOT_MODIFIED → fresh check + skip
+  • USERNAME_OCCUPIED → graceful error
+  • FLOOD_WAIT → auto sleep
+
 """
 
 import asyncio
@@ -144,7 +150,7 @@ class RotationManager:
         )
         self.accounts[acc_name] = client
 
-        # ─── Cache chat objects (Peer id fix) ───
+        # ─── Cache chat objects ───
         await self._cache_chats(acc_name, client, acc_data)
 
         # ─── Start channel loops ───
@@ -159,10 +165,9 @@ class RotationManager:
             self.tasks[(acc_name, ch_id)] = task
 
     # ═════════════════════════════════════
-    #  CACHE CHATS VIA DIALOGS (PEER FIX)
+    #  CACHE CHATS
     # ═════════════════════════════════════
     async def _cache_chats(self, acc_name, client, acc_data):
-        """Load all channels via dialogs — fixes Peer id invalid."""
         needed_ids = set()
         for ch_conf in acc_data.get("channels", []):
             if ch_conf.get("enabled", True):
@@ -213,11 +218,10 @@ class RotationManager:
 
         while True:
             try:
-                # ── Get cached chat (Peer fix) ──
+                # ── Get cached chat ──
                 target_chat = self.chat_cache.get((acc_name, ch_id))
 
                 if not target_chat:
-                    # Try to refetch from dialogs
                     async for dialog in client.get_dialogs():
                         if dialog.chat.id == ch_id:
                             target_chat = dialog.chat
@@ -227,30 +231,74 @@ class RotationManager:
                 if not target_chat:
                     raise Exception(f"Channel not accessible: {ch_id}")
 
-                # ── Current username ──
-                current = target_chat.username
+                # ── Get fresh current username ──
+                try:
+                    fresh = await client.get_chat(target_chat.id)
+                    current = fresh.username
+                except Exception:
+                    current = target_chat.username
 
-                # ── Pick next username ──
+                # ── Pick next username (skip current) ──
                 idx = self.indexes[key]
-                new_username = pool[idx % len(pool)]
+                new_username = None
 
-                # Skip if same as current
-                if new_username == current:
-                    self.indexes[key] = (idx + 1) % len(pool)
-                    new_username = pool[self.indexes[key]]
+                for i in range(len(pool)):
+                    candidate = pool[(idx + i) % len(pool)]
+                    if candidate != current:
+                        new_username = candidate
+                        self.indexes[key] = (idx + i + 1) % len(pool)
+                        break
+
+                if not new_username:
+                    log.warning(
+                        f"{acc_name}/{ch_id}: all pool usernames == current"
+                    )
+                    await asyncio.sleep(interval)
+                    continue
 
                 # ── Resolve peer ──
                 peer = await client.resolve_peer(target_chat.id)
 
                 # ── Change username ──
-                await client.invoke(
-                    UpdateUsername(channel=peer, username=new_username)
-                )
+                try:
+                    await client.invoke(
+                        UpdateUsername(channel=peer, username=new_username)
+                    )
+                except Exception as ue:
+                    err = str(ue)
 
-                # Update cached chat username
+                    # Graceful: username unchanged
+                    if "USERNAME_NOT_MODIFIED" in err:
+                        log.warning(
+                            f"{acc_name}/{ch_id}: unchanged, moving on"
+                        )
+                        target_chat.username = new_username
+                        await asyncio.sleep(interval)
+                        continue
+
+                    # Graceful: username taken
+                    if "USERNAME_OCCUPIED" in err:
+                        log.warning(
+                            f"{acc_name}/{ch_id}: @{new_username} occupied"
+                        )
+                        await asyncio.sleep(interval)
+                        continue
+
+                    # Graceful: flood wait
+                    if "FLOOD_WAIT" in err:
+                        import re
+                        m = re.search(r"FLOOD_WAIT_(\d+)", err)
+                        wait = int(m.group(1)) if m else 60
+                        log.warning(
+                            f"{acc_name}/{ch_id}: flood wait {wait}s"
+                        )
+                        await asyncio.sleep(wait + 5)
+                        continue
+
+                    raise
+
+                # Update cache
                 target_chat.username = new_username
-
-                self.indexes[key] = (self.indexes[key] + 1) % len(pool)
 
                 # ── Metrics ──
                 metrics.record_success(acc_name, ch_id, new_username)
@@ -327,4 +375,4 @@ class RotationManager:
     def get_account_channels(self, acc_name):
         return [
             ch for (a, ch) in self.tasks.keys() if a == acc_name
-        ]
+                ]

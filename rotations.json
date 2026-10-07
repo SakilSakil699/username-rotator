@@ -4,11 +4,11 @@
       "channels": [
         {
           "channel_id": -1002461966751,
-          "interval": 3600,
+          "interval": 120,
           "enabled": true,
-          "_note": "ACTIVE - Friends (Channel 1)",
+          "_note": "ACTIVE - Friends",
           "pool": [
-            "sakilAnowar2",
+            "sakilAnowar1",
             "sakilAnowar3",
             "sakilAnowar4",
             "sakilAnowar5",
@@ -24,99 +24,63 @@
           "interval": 3600,
           "enabled": false,
           "_note": "DISABLED - Channel 2",
-          "pool": [
-            "channel2name1",
-            "channel2name2",
-            "channel2name3"
-          ]
+          "pool": ["channel2name1", "channel2name2", "channel2name3"]
         },
         {
           "channel_id": -1002222222222,
           "interval": 3600,
           "enabled": false,
           "_note": "DISABLED - Channel 3",
-          "pool": [
-            "channel3name1",
-            "channel3name2",
-            "channel3name3"
-          ]
+          "pool": ["channel3name1", "channel3name2", "channel3name3"]
         },
         {
           "channel_id": -1003333333333,
           "interval": 3600,
           "enabled": false,
           "_note": "DISABLED - Channel 4",
-          "pool": [
-            "channel4name1",
-            "channel4name2",
-            "channel4name3"
-          ]
+          "pool": ["channel4name1", "channel4name2", "channel4name3"]
         },
         {
           "channel_id": -1004444444444,
           "interval": 3600,
           "enabled": false,
           "_note": "DISABLED - Channel 5",
-          "pool": [
-            "channel5name1",
-            "channel5name2",
-            "channel5name3"
-          ]
+          "pool": ["channel5name1", "channel5name2", "channel5name3"]
         },
         {
           "channel_id": -1005555555555,
           "interval": 3600,
           "enabled": false,
           "_note": "DISABLED - Channel 6",
-          "pool": [
-            "channel6name1",
-            "channel6name2",
-            "channel6name3"
-          ]
+          "pool": ["channel6name1", "channel6name2", "channel6name3"]
         },
         {
           "channel_id": -1006666666666,
           "interval": 3600,
           "enabled": false,
           "_note": "DISABLED - Channel 7",
-          "pool": [
-            "channel7name1",
-            "channel7name2",
-            "channel7name3"
-          ]
+          "pool": ["channel7name1", "channel7name2", "channel7name3"]
         },
         {
           "channel_id": -1007777777777,
           "interval": 3600,
           "enabled": false,
           "_note": "DISABLED - Channel 8",
-          "pool": [
-            "channel8name1",
-            "channel8name2",
-            "channel8name3"
-          ]
+          "pool": ["channel8name1", "channel8name2", "channel8name3"]
         },
         {
           "channel_id": -1008888888888,
           "interval": 3600,
           "enabled": false,
           "_note": "DISABLED - Channel 9",
-          "pool": [
-            "channel9name1",
-            "channel9name2",
-            "channel9name3"
-          ]
+          "pool": ["channel9name1", "channel9name2", "channel9name3"]
         },
         {
           "channel_id": -1009999999999,
           "interval": 3600,
           "enabled": false,
           "_note": "DISABLED - Channel 10",
-          "pool": [
-            "channel10name1",
-            "channel10name2",
-            "channel10name3"
-          ]
+          "pool": ["channel10name1", "channel10name2", "channel10name3"]
         }
       ]
     }

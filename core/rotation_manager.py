@@ -1,13 +1,6 @@
 """
 🔄 Rotation Manager — Multi-Account Engine
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Fixes:
-  • Peer id invalid  → dialogs se cache
-  • USERNAME_NOT_MODIFIED → fresh check + skip
-  • USERNAME_OCCUPIED → graceful error
-  • FLOOD_WAIT → auto sleep
-
+Fixes: Peer id invalid + USERNAME_NOT_MODIFIED
 """
 
 import asyncio
@@ -36,7 +29,7 @@ class RotationManager:
         self.tasks = {}
         self.indexes = {}
         self.config = {}
-        self.chat_cache = {}   # {(acc_name, ch_id): chat_obj}
+        self.chat_cache = {}
 
     # ═════════════════════════════════════
     #  CONFIG
@@ -89,7 +82,7 @@ class RotationManager:
 
         client = None
 
-        # ─── Priority 1: .env SESSION_<NAME> ───
+        # ─── Priority 1: .env ───
         if session_string:
             if session_string.startswith("gAAAAA"):
                 try:
@@ -107,7 +100,7 @@ class RotationManager:
                 in_memory=True,
             )
 
-        # ─── Priority 2: accounts/<name>.session file ───
+        # ─── Priority 2: file ───
         elif session_file.exists():
             try:
                 content = session_file.read_text().strip()
@@ -141,7 +134,7 @@ class RotationManager:
             log.error(f"No session for {acc_name}")
             return
 
-        # ─── Start client ───
+        # ─── Start ───
         await client.start()
         me = await client.get_me()
         log.info(
@@ -150,10 +143,10 @@ class RotationManager:
         )
         self.accounts[acc_name] = client
 
-        # ─── Cache chat objects ───
+        # ─── Cache chats ───
         await self._cache_chats(acc_name, client, acc_data)
 
-        # ─── Start channel loops ───
+        # ─── Start loops ───
         for ch_conf in acc_data.get("channels", []):
             if not ch_conf.get("enabled", True):
                 continue
@@ -213,7 +206,6 @@ class RotationManager:
         key = (acc_name, ch_id)
         self.indexes[key] = 0
 
-        # Initial delay
         await asyncio.sleep(10)
 
         while True:
@@ -231,14 +223,14 @@ class RotationManager:
                 if not target_chat:
                     raise Exception(f"Channel not accessible: {ch_id}")
 
-                # ── Get fresh current username ──
+                # ── Fresh current username ──
                 try:
                     fresh = await client.get_chat(target_chat.id)
                     current = fresh.username
                 except Exception:
                     current = target_chat.username
 
-                # ── Pick next username (skip current) ──
+                # ── Pick next (skip current) ──
                 idx = self.indexes[key]
                 new_username = None
 
@@ -267,7 +259,6 @@ class RotationManager:
                 except Exception as ue:
                     err = str(ue)
 
-                    # Graceful: username unchanged
                     if "USERNAME_NOT_MODIFIED" in err:
                         log.warning(
                             f"{acc_name}/{ch_id}: unchanged, moving on"
@@ -276,7 +267,6 @@ class RotationManager:
                         await asyncio.sleep(interval)
                         continue
 
-                    # Graceful: username taken
                     if "USERNAME_OCCUPIED" in err:
                         log.warning(
                             f"{acc_name}/{ch_id}: @{new_username} occupied"
@@ -284,20 +274,18 @@ class RotationManager:
                         await asyncio.sleep(interval)
                         continue
 
-                    # Graceful: flood wait
                     if "FLOOD_WAIT" in err:
                         import re
                         m = re.search(r"FLOOD_WAIT_(\d+)", err)
                         wait = int(m.group(1)) if m else 60
                         log.warning(
-                            f"{acc_name}/{ch_id}: flood wait {wait}s"
+                            f"{acc_name}/{ch_id}: flood {wait}s"
                         )
                         await asyncio.sleep(wait + 5)
                         continue
 
                     raise
 
-                # Update cache
                 target_chat.username = new_username
 
                 # ── Metrics ──
@@ -309,7 +297,7 @@ class RotationManager:
                     f"{C.PINK}@{new_username}{C.RESET}"
                 )
 
-                # ── Notify owner ──
+                # ── Notify ──
                 await self._notify_owner(
                     f"✅ <b>Rotated</b>\n\n"
                     f"👤 <code>{acc_name}</code>\n"
@@ -375,4 +363,4 @@ class RotationManager:
     def get_account_channels(self, acc_name):
         return [
             ch for (a, ch) in self.tasks.keys() if a == acc_name
-                ]
+        ]

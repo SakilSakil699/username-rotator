@@ -31,7 +31,7 @@ class RotationManager:
         self.config = {}
 
     # ═════════════════════════════════════
-    #  CONFIG LOADING
+    #  CONFIG
     # ═════════════════════════════════════
     def load_config(self):
         """Load rotations.json."""
@@ -47,7 +47,7 @@ class RotationManager:
         log.info(f"Loaded config: {C.PINK}{count}{C.RESET} accounts")
 
     # ═════════════════════════════════════
-    #  STARTUP
+    #  START ALL
     # ═════════════════════════════════════
     async def start_all(self):
         """Start all accounts from config."""
@@ -73,17 +73,23 @@ class RotationManager:
         )
 
     # ═════════════════════════════════════
-    #  START ONE ACCOUNT
+    #  START ONE ACCOUNT (Smart Session Detection)
     # ═════════════════════════════════════
     async def _start_account(self, acc_name, acc_data):
-        """Start a single account."""
+        """Start a single account with smart session detection."""
         from config import API_ID, API_HASH
 
-        # Get session
         session_string = os.getenv(f"SESSION_{acc_name.upper()}")
         session_file = SESSIONS_DIR / f"{acc_name}.session"
 
+        client = None
+
+        # ─────────────────────────────────
+        #  Priority 1: .env SESSION_<NAME>
+        # ─────────────────────────────────
         if session_string:
+            log.info(f"{acc_name}: using .env session")
+
             # Decrypt if vaulted
             if session_string.startswith("gAAAAA"):
                 try:
@@ -100,16 +106,52 @@ class RotationManager:
                 session_string=session_string,
                 in_memory=True,
             )
+
+        # ─────────────────────────────────
+        #  Priority 2: accounts/<name>.session file
+        # ─────────────────────────────────
         elif session_file.exists():
-            client = Client(
-                name=str(session_file.with_suffix("")),
-                api_id=API_ID,
-                api_hash=API_HASH,
-            )
+            log.info(f"{acc_name}: using file session")
+
+            try:
+                content = session_file.read_text().strip()
+            except Exception as e:
+                log.error(f"{acc_name} read failed: {e}")
+                return
+
+            # Detect type: string session or SQLite file
+            if content.startswith("gAAAAA") or content.startswith("BQACAg"):
+                # String session (encrypted or plain)
+                if content.startswith("gAAAAA"):
+                    try:
+                        from core.session_vault import SessionVault
+                        content = SessionVault().unlock(content)
+                    except Exception as e:
+                        log.error(f"{acc_name} decrypt failed: {e}")
+                        return
+
+                client = Client(
+                    name=f"acc_{acc_name}",
+                    api_id=API_ID,
+                    api_hash=API_HASH,
+                    session_string=content,
+                    in_memory=True,
+                )
+            else:
+                # SQLite file session
+                client = Client(
+                    name=str(session_file.with_suffix("")),
+                    api_id=API_ID,
+                    api_hash=API_HASH,
+                )
+
         else:
             log.error(f"No session for {acc_name}")
             return
 
+        # ─────────────────────────────────
+        #  Start client
+        # ─────────────────────────────────
         await client.start()
         me = await client.get_me()
         log.info(
@@ -118,7 +160,9 @@ class RotationManager:
         )
         self.accounts[acc_name] = client
 
-        # Start channel loops
+        # ─────────────────────────────────
+        #  Start channel rotation loops
+        # ─────────────────────────────────
         for ch_conf in acc_data.get("channels", []):
             if not ch_conf.get("enabled", True):
                 continue
@@ -145,28 +189,28 @@ class RotationManager:
         key = (acc_name, ch_id)
         self.indexes[key] = 0
 
-        # Initial delay
+        # Initial delay (avoid flood on startup)
         await asyncio.sleep(10)
 
         while True:
             try:
-                # Current username
+                # ── Get current username ──
                 try:
                     chat = await client.get_chat(ch_id)
                     current = chat.username
                 except Exception:
                     current = None
 
-                # Pick next
+                # ── Pick next username ──
                 idx = self.indexes[key]
                 new_username = pool[idx % len(pool)]
 
-                # Skip same
+                # Skip if same as current
                 if new_username == current:
                     self.indexes[key] = (idx + 1) % len(pool)
                     new_username = pool[self.indexes[key]]
 
-                # Change username
+                # ── Change username ──
                 chat = await client.get_chat(ch_id)
                 peer = await client.resolve_peer(chat.id)
 
@@ -176,7 +220,7 @@ class RotationManager:
 
                 self.indexes[key] = (self.indexes[key] + 1) % len(pool)
 
-                # Metrics
+                # ── Metrics ──
                 metrics.record_success(acc_name, ch_id, new_username)
 
                 log.info(
@@ -185,7 +229,7 @@ class RotationManager:
                     f"{C.PINK}@{new_username}{C.RESET}"
                 )
 
-                # Notify owner
+                # ── Notify owner ──
                 await self._notify_owner(
                     f"✅ <b>Rotated</b>\n\n"
                     f"👤 <code>{acc_name}</code>\n"

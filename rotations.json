@@ -1,0 +1,39 @@
+{
+  "accounts": {
+    "sakil1": {
+      "channels": [
+        {
+          "channel_id": -1002461966751,
+          "interval": 1800,
+          "enabled": true,
+          "pool": [
+            "sakilAnowar1",
+            "sakilAnowar2",
+            "sakilAnowar3",
+            "sakilAnowar4",
+            "sakilAnowar5",
+            "sakilAnowar6",
+            "sakilAnowar7",
+            "sakilAnowar8",
+            "sakilAnowar9",
+            "sakilAnowar10"
+          ]
+        }
+      ]
+    },
+    "sakil2": {
+      "channels": [
+        {
+          "channel_id": -1001111111111,
+          "interval": 1800,
+          "enabled": true,
+          "pool": [
+            "channel2name1",
+            "channel2name2",
+            "channel2name3"
+          ]
+        }
+      ]
+    }
+  }
+}

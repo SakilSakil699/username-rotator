@@ -1,6 +1,7 @@
 """
 🔄 Rotation Manager — Multi-Account Engine
 Har account + channel ka apna independent loop
+Peer id invalid fix: dialogs se channel resolve karta hai
 """
 
 import asyncio
@@ -29,12 +30,12 @@ class RotationManager:
         self.tasks = {}
         self.indexes = {}
         self.config = {}
+        self.chat_cache = {}   # {(acc_name, ch_id): chat_obj}
 
     # ═════════════════════════════════════
     #  CONFIG
     # ═════════════════════════════════════
     def load_config(self):
-        """Load rotations.json."""
         if not CONFIG_FILE.exists():
             log.warning("rotations.json not found")
             self.config = {"accounts": {}}
@@ -50,7 +51,6 @@ class RotationManager:
     #  START ALL
     # ═════════════════════════════════════
     async def start_all(self):
-        """Start all accounts from config."""
         self.load_config()
 
         accounts = self.config.get("accounts", {})
@@ -73,10 +73,9 @@ class RotationManager:
         )
 
     # ═════════════════════════════════════
-    #  START ONE ACCOUNT (Smart Session Detection)
+    #  START ONE ACCOUNT
     # ═════════════════════════════════════
     async def _start_account(self, acc_name, acc_data):
-        """Start a single account with smart session detection."""
         from config import API_ID, API_HASH
 
         session_string = os.getenv(f"SESSION_{acc_name.upper()}")
@@ -84,13 +83,8 @@ class RotationManager:
 
         client = None
 
-        # ─────────────────────────────────
-        #  Priority 1: .env SESSION_<NAME>
-        # ─────────────────────────────────
+        # ─── Priority 1: .env SESSION_<NAME> ───
         if session_string:
-            log.info(f"{acc_name}: using .env session")
-
-            # Decrypt if vaulted
             if session_string.startswith("gAAAAA"):
                 try:
                     from core.session_vault import SessionVault
@@ -107,21 +101,15 @@ class RotationManager:
                 in_memory=True,
             )
 
-        # ─────────────────────────────────
-        #  Priority 2: accounts/<name>.session file
-        # ─────────────────────────────────
+        # ─── Priority 2: accounts/<name>.session file ───
         elif session_file.exists():
-            log.info(f"{acc_name}: using file session")
-
             try:
                 content = session_file.read_text().strip()
             except Exception as e:
                 log.error(f"{acc_name} read failed: {e}")
                 return
 
-            # Detect type: string session or SQLite file
             if content.startswith("gAAAAA") or content.startswith("BQACAg"):
-                # String session (encrypted or plain)
                 if content.startswith("gAAAAA"):
                     try:
                         from core.session_vault import SessionVault
@@ -138,20 +126,16 @@ class RotationManager:
                     in_memory=True,
                 )
             else:
-                # SQLite file session
                 client = Client(
                     name=str(session_file.with_suffix("")),
                     api_id=API_ID,
                     api_hash=API_HASH,
                 )
-
         else:
             log.error(f"No session for {acc_name}")
             return
 
-        # ─────────────────────────────────
-        #  Start client
-        # ─────────────────────────────────
+        # ─── Start client ───
         await client.start()
         me = await client.get_me()
         log.info(
@@ -160,9 +144,10 @@ class RotationManager:
         )
         self.accounts[acc_name] = client
 
-        # ─────────────────────────────────
-        #  Start channel rotation loops
-        # ─────────────────────────────────
+        # ─── Cache chat objects (Peer id fix) ───
+        await self._cache_chats(acc_name, client, acc_data)
+
+        # ─── Start channel loops ───
         for ch_conf in acc_data.get("channels", []):
             if not ch_conf.get("enabled", True):
                 continue
@@ -174,10 +159,44 @@ class RotationManager:
             self.tasks[(acc_name, ch_id)] = task
 
     # ═════════════════════════════════════
+    #  CACHE CHATS VIA DIALOGS (PEER FIX)
+    # ═════════════════════════════════════
+    async def _cache_chats(self, acc_name, client, acc_data):
+        """Load all channels via dialogs — fixes Peer id invalid."""
+        needed_ids = set()
+        for ch_conf in acc_data.get("channels", []):
+            if ch_conf.get("enabled", True):
+                needed_ids.add(ch_conf["channel_id"])
+
+        if not needed_ids:
+            return
+
+        log.info(f"Caching chats for {acc_name}...")
+
+        cached = 0
+        try:
+            async for dialog in client.get_dialogs():
+                chat = dialog.chat
+                if chat.id in needed_ids:
+                    self.chat_cache[(acc_name, chat.id)] = chat
+                    cached += 1
+                    if cached >= len(needed_ids):
+                        break
+        except Exception as e:
+            log.warning(f"Cache error {acc_name}: {e}")
+
+        found = len([
+            (a, c) for (a, c) in self.chat_cache.keys() if a == acc_name
+        ])
+        log.info(
+            f"Cached {C.PINK}{found}{C.RESET}/{len(needed_ids)} "
+            f"channels for {acc_name}"
+        )
+
+    # ═════════════════════════════════════
     #  ROTATION LOOP
     # ═════════════════════════════════════
     async def _rotation_loop(self, acc_name, client, conf):
-        """Rotation loop for one channel."""
         ch_id = conf["channel_id"]
         interval = conf.get("interval", 1800)
         pool = conf.get("pool", [])
@@ -189,17 +208,27 @@ class RotationManager:
         key = (acc_name, ch_id)
         self.indexes[key] = 0
 
-        # Initial delay (avoid flood on startup)
+        # Initial delay
         await asyncio.sleep(10)
 
         while True:
             try:
-                # ── Get current username ──
-                try:
-                    chat = await client.get_chat(ch_id)
-                    current = chat.username
-                except Exception:
-                    current = None
+                # ── Get cached chat (Peer fix) ──
+                target_chat = self.chat_cache.get((acc_name, ch_id))
+
+                if not target_chat:
+                    # Try to refetch from dialogs
+                    async for dialog in client.get_dialogs():
+                        if dialog.chat.id == ch_id:
+                            target_chat = dialog.chat
+                            self.chat_cache[(acc_name, ch_id)] = target_chat
+                            break
+
+                if not target_chat:
+                    raise Exception(f"Channel not accessible: {ch_id}")
+
+                # ── Current username ──
+                current = target_chat.username
 
                 # ── Pick next username ──
                 idx = self.indexes[key]
@@ -210,13 +239,16 @@ class RotationManager:
                     self.indexes[key] = (idx + 1) % len(pool)
                     new_username = pool[self.indexes[key]]
 
-                # ── Change username ──
-                chat = await client.get_chat(ch_id)
-                peer = await client.resolve_peer(chat.id)
+                # ── Resolve peer ──
+                peer = await client.resolve_peer(target_chat.id)
 
+                # ── Change username ──
                 await client.invoke(
                     UpdateUsername(channel=peer, username=new_username)
                 )
+
+                # Update cached chat username
+                target_chat.username = new_username
 
                 self.indexes[key] = (self.indexes[key] + 1) % len(pool)
 
@@ -254,7 +286,6 @@ class RotationManager:
     #  HELPERS
     # ═════════════════════════════════════
     async def _notify_owner(self, text):
-        """Send message to owner."""
         try:
             from config import OWNER_ID
             await self.main_app.send_message(OWNER_ID, text)
@@ -265,7 +296,6 @@ class RotationManager:
     #  STOP
     # ═════════════════════════════════════
     async def stop_all(self):
-        """Stop all rotations."""
         for task in self.tasks.values():
             task.cancel()
         self.tasks.clear()
@@ -276,13 +306,13 @@ class RotationManager:
             except Exception:
                 pass
         self.accounts.clear()
+        self.chat_cache.clear()
         log.info("All stopped")
 
     # ═════════════════════════════════════
     #  STATUS
     # ═════════════════════════════════════
     def get_status(self):
-        """Get status dict."""
         s = {}
         for acc_name in self.accounts.keys():
             channels = [
@@ -295,7 +325,6 @@ class RotationManager:
         return s
 
     def get_account_channels(self, acc_name):
-        """Get channels for one account."""
         return [
             ch for (a, ch) in self.tasks.keys() if a == acc_name
         ]

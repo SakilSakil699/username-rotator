@@ -1,15 +1,12 @@
 """
-🎮 Premium Control Commands
+🎮 Simple Control Commands
+.start .stop .on .off .list .status .rotate
 """
 
 from pyrogram import filters
 from config import BOT_PREFIX, OWNER_ID
 from core.colors import C
 from core.metrics import metrics
-from modules.utils import (
-    cmd_filter, format_uptime, humanize_number,
-    truncate, split_chunks,
-)
 
 import main
 
@@ -18,7 +15,7 @@ PREFIX = BOT_PREFIX
 
 
 def cmd(name):
-    return cmd_filter(name, PREFIX)
+    return filters.command(name, prefixes=PREFIX) & filters.me
 
 
 def _owner_only(message):
@@ -27,270 +24,252 @@ def _owner_only(message):
 
 def register(app):
 
-    @app.on_message(cmd("start") | cmd("help"))
+    # ═══════════════════════════════════════════
+    #  .start — Start ALL accounts
+    # ═══════════════════════════════════════════
+    @app.on_message(cmd("start"))
     async def start_cmd(client, message):
-        p = PREFIX
-        text = (
-            f"{C.PURPLE}{C.BOLD}🔄 USERNAME ROTATOR{C.RESET}\n"
-            f"{C.DIM}{'─' * 42}{C.RESET}\n\n"
-            f"{C.PINK}📊 STATUS{C.RESET}\n"
-            f"  <code>{p}status</code>    — Live dashboard\n"
-            f"  <code>{p}metrics</code>   — Detailed stats\n"
-            f"  <code>{p}uptime</code>    — Bot uptime\n\n"
-            f"{C.PINK}👥 ACCOUNTS{C.RESET}\n"
-            f"  <code>{p}accounts</code>  — List all accounts\n"
-            f"  <code>{p}channels</code>  — List all channels\n"
-            f"  <code>{p}acc &lt;name&gt;</code>  — Account detail\n\n"
-            f"{C.PINK}🎮 CONTROL{C.RESET}\n"
-            f"  <code>{p}rotate &lt;acc&gt; &lt;ch&gt;</code> — Manual rotate\n"
-            f"  <code>{p}reload</code>    — Reload rotations.json\n"
-            f"  <code>{p}stop</code>      — Stop all rotations\n"
-            f"  <code>{p}restart</code>   — Restart bot\n\n"
-            f"{C.PINK}🔐 SECURITY{C.RESET}\n"
-            f"  <code>{p}encrypt &lt;s&gt;</code> — Encrypt session\n"
-            f"  <code>{p}decrypt &lt;s&gt;</code> — Decrypt session\n\n"
-            f"{C.DIM}Built by Sakil 💜{C.RESET}"
+        rm = main.rotation_manager
+        if not rm:
+            return await message.edit("❌ Manager offline")
+
+        await message.edit("▶️ Starting all accounts...")
+
+        count = await rm.start_all_accounts()
+
+        await message.edit(
+            f"▶️ <b>All accounts started</b>\n\n"
+            f"✅ Active: <code>{count}</code> accounts\n"
+            f"📢 Channels: <code>{len(rm.tasks)}</code>"
         )
+
+    # ═══════════════════════════════════════════
+    #  .stop — Stop ALL accounts
+    # ═══════════════════════════════════════════
+    @app.on_message(cmd("stop"))
+    async def stop_cmd(client, message):
+        rm = main.rotation_manager
+        if not rm:
+            return await message.edit("❌ Manager offline")
+
+        await message.edit("⏸ Stopping all accounts...")
+
+        count = await rm.stop_all_accounts()
+
+        await message.edit(
+            f"⏸ <b>All accounts stopped</b>\n\n"
+            f"✅ Stopped: <code>{count}</code> accounts\n"
+            f"📢 Active channels: <code>0</code>"
+        )
+
+    # ═══════════════════════════════════════════
+    #  .on <acc> [acc2] [acc3]... — Start specific
+    # ═══════════════════════════════════════════
+    @app.on_message(cmd("on"))
+    async def on_cmd(client, message):
+        rm = main.rotation_manager
+        if not rm:
+            return await message.edit("❌ Manager offline")
+
+        args = message.text.split()[1:]  # All accounts after .on
+        if not args:
+            return await message.edit(
+                f"⚠️ Usage:\n"
+                f"<code>.on sakil1</code>\n"
+                f"<code>.on sakil1 sakil2 sakil3</code>"
+            )
+
+        await message.edit(f"▶️ Starting {len(args)} account(s)...")
+
+        results = []
+        for acc in args:
+            ok, msg = await rm.start_account(acc)
+            icon = "✅" if ok else "❌"
+            results.append(f"{icon} <code>{acc}</code> — {msg}")
+
+        await message.edit(
+            f"▶️ <b>Account(s) started</b>\n\n" + "\n".join(results)
+        )
+
+    # ═══════════════════════════════════════════
+    #  .off <acc> [acc2]... — Stop specific
+    # ═══════════════════════════════════════════
+    @app.on_message(cmd("off"))
+    async def off_cmd(client, message):
+        rm = main.rotation_manager
+        if not rm:
+            return await message.edit("❌ Manager offline")
+
+        args = message.text.split()[1:]
+        if not args:
+            return await message.edit(
+                f"⚠️ Usage:\n"
+                f"<code>.off sakil1</code>\n"
+                f"<code>.off sakil1 sakil2</code>"
+            )
+
+        await message.edit(f"⏸ Stopping {len(args)} account(s)...")
+
+        results = []
+        for acc in args:
+            ok, msg = await rm.stop_account(acc)
+            icon = "✅" if ok else "❌"
+            results.append(f"{icon} <code>{acc}</code> — {msg}")
+
+        await message.edit(
+            f"⏸ <b>Account(s) stopped</b>\n\n" + "\n".join(results)
+        )
+
+    # ═══════════════════════════════════════════
+    #  .list — List all accounts with status
+    # ═══════════════════════════════════════════
+    @app.on_message(cmd("list"))
+    async def list_cmd(client, message):
+        rm = main.rotation_manager
+        if not rm:
+            return await message.edit("❌ Manager offline")
+
+        text = f"{C.PURPLE}{C.BOLD}👥 ALL ACCOUNTS{C.RESET}\n"
+        text += f"{C.DIM}{'─' * 42}{C.RESET}\n\n"
+
+        if not rm.accounts:
+            return await message.edit(text + "<i>No accounts loaded</i>")
+
+        for acc in rm.accounts.keys():
+            is_running = rm.is_account_running(acc)
+            chans = rm.get_status().get(acc, {}).get("count", 0)
+            status = "🟢 ON " if is_running else "⚫ OFF"
+            text += (
+                f"{status} <b>{acc}</b> "
+                f"— {chans} channels\n"
+            )
+
+        text += f"\n{C.DIM}Use .on &lt;acc&gt; / .off &lt;acc&gt;{C.RESET}"
+
         await message.edit(text)
 
+    # ═══════════════════════════════════════════
+    #  .status — Global status
+    # ═══════════════════════════════════════════
     @app.on_message(cmd("status"))
     async def status_cmd(client, message):
         rm = main.rotation_manager
         if not rm:
             return await message.edit("❌ Manager offline")
-        s = rm.get_status()
+
+        gs = rm.get_global_status()
         m = metrics.summary()
+
         text = (
-            f"{C.PURPLE}{C.BOLD}📊 LIVE DASHBOARD{C.RESET}\n"
+            f"{C.PURPLE}{C.BOLD}📊 GLOBAL STATUS{C.RESET}\n"
             f"{C.DIM}{'─' * 42}{C.RESET}\n\n"
-            f"{C.PINK}⏱ UPTIME{C.RESET}\n"
-            f"   <code>{m['uptime']}</code>\n\n"
-            f"{C.PINK}📈 STATS{C.RESET}\n"
-            f"   Accounts:  <code>{m['accounts']}</code>\n"
-            f"   Channels:  <code>{m['channels']}</code>\n"
-            f"   Rotations: <code>{humanize_number(m['rotations'])}</code>\n"
-            f"   Failures:  <code>{m['failures']}</code>\n"
-            f"   Success:   <code>{m['success_rate']}</code>\n\n"
-            f"{C.PINK}👥 ACTIVE ACCOUNTS{C.RESET}\n"
+
+            f"👥 <b>Accounts:</b>  <code>{gs['accounts_loaded']}/{gs['total_accounts']}</code>\n"
+            f"📢 <b>Channels:</b>  <code>{gs['active_channels']}</code>\n"
+            f"🟢 <b>Running:</b>   <code>{len(gs['running_accounts'])}</code>\n\n"
+
+            f"{C.PINK}📈 METRICS{C.RESET}\n"
+            f"   🔄 Rotations: <code>{m['rotations']}</code>\n"
+            f"   ❌ Failures:  <code>{m['failures']}</code>\n"
+            f"   ✅ Success:   <code>{m['success_rate']}</code>\n"
+            f"   ⏱ Uptime:    <code>{m['uptime']}</code>\n"
         )
-        if not s:
-            text += "   <i>No accounts running</i>\n"
-        else:
-            for acc, data in s.items():
-                text += f"   • <b>{acc}</b> — <code>{data['count']}</code> channels\n"
-        top = metrics.top_accounts(3)
-        if top:
-            text += f"\n{C.PINK}🏆 TOP PERFORMERS{C.RESET}\n"
-            for acc, count in top:
-                text += f"   • <code>{acc}</code> — {count} rotations\n"
+
+        if gs["running_accounts"]:
+            text += f"\n{C.PINK}🟢 ACTIVE{C.RESET}\n"
+            for acc in gs["running_accounts"]:
+                text += f"   • <code>{acc}</code>\n"
+
         await message.edit(text)
 
-    @app.on_message(cmd("metrics"))
-    async def metrics_cmd(client, message):
-        m = metrics.summary()
-        text = (
-            f"{C.PURPLE}{C.BOLD}📈 DETAILED METRICS{C.RESET}\n"
-            f"{C.DIM}{'─' * 42}{C.RESET}\n\n"
-            f"⏱ Uptime:       <code>{m['uptime']}</code>\n"
-            f"🔄 Rotations:    <code>{m['rotations']}</code>\n"
-            f"❌ Failures:     <code>{m['failures']}</code>\n"
-            f"📊 Success rate: <code>{m['success_rate']}</code>\n"
-            f"👥 Accounts:     <code>{m['accounts']}</code>\n"
-            f"📢 Channels:     <code>{m['channels']}</code>\n\n"
-            f"{C.PINK}🕐 RECENT ACTIVITY{C.RESET}\n"
-        )
-        if not metrics.recent:
-            text += "   <i>No activity yet</i>\n"
-        else:
-            for r in metrics.recent[-5:]:
-                uname = truncate(r.get("username", ""), 20)
-                text += f"   {r['status']} <code>{r['account']}</code> → <code>@{uname}</code>\n"
-        await message.edit(text)
-
-    @app.on_message(cmd("uptime"))
-    async def uptime_cmd(client, message):
-        m = metrics.summary()
-        await message.edit(
-            f"⏱ <b>Uptime:</b> <code>{m['uptime']}</code>\n"
-            f"📊 <b>Rotations:</b> <code>{m['rotations']}</code>"
-        )
-
-    @app.on_message(cmd("accounts"))
-    async def accounts_cmd(client, message):
-        rm = main.rotation_manager
-        if not rm:
-            return await message.edit("❌ Offline")
-        accounts = list(rm.accounts.keys())
-        if not accounts:
-            return await message.edit("📭 No accounts")
-        text = (
-            f"{C.PURPLE}{C.BOLD}👥 ACCOUNTS ({len(accounts)}){C.RESET}\n"
-            f"{C.DIM}{'─' * 42}{C.RESET}\n\n"
-        )
-        for i, acc in enumerate(accounts, 1):
-            chans = rm.get_account_channels(acc)
-            text += f"   {i}. <b>{acc}</b> — <code>{len(chans)}</code> channels\n"
-        await message.edit(text)
-
-    @app.on_message(cmd("channels"))
-    async def channels_cmd(client, message):
-        rm = main.rotation_manager
-        if not rm:
-            return await message.edit("❌ Offline")
-        tasks = list(rm.tasks.keys())
-        if not tasks:
-            return await message.edit("📭 No channels")
-        text = (
-            f"{C.PURPLE}{C.BOLD}📢 CHANNELS ({len(tasks)}){C.RESET}\n"
-            f"{C.DIM}{'─' * 42}{C.RESET}\n\n"
-        )
-        for acc, ch in tasks:
-            text += f"   • <code>{acc}</code> → <code>{ch}</code>\n"
-        await message.edit(text)
-
-    @app.on_message(cmd("acc"))
-    async def acc_detail(client, message):
-        rm = main.rotation_manager
-        args = message.text.split()
-        if len(args) < 2:
-            return await message.edit("⚠️ <code>.acc sakil1</code>")
-        acc_name = args[1]
-        if not rm or acc_name not in rm.accounts:
-            return await message.edit(f"❌ Account not found: {acc_name}")
-        client_obj = rm.accounts[acc_name]
-        try:
-            me = await client_obj.get_me()
-        except Exception as e:
-            return await message.edit(f"❌ <code>{e}</code>")
-        chans = rm.get_account_channels(acc_name)
-        text = (
-            f"{C.PURPLE}{C.BOLD}👤 ACCOUNT: {acc_name}{C.RESET}\n"
-            f"{C.DIM}{'─' * 42}{C.RESET}\n\n"
-            f"<b>Name:</b> {me.first_name} {me.last_name or ''}\n"
-            f"<b>Username:</b> @{me.username or '—'}\n"
-            f"<b>ID:</b> <code>{me.id}</code>\n"
-            f"<b>Phone:</b> <code>{me.phone_number or '—'}</code>\n"
-            f"<b>Channels:</b> <code>{len(chans)}</code>\n\n"
-        )
-        for ch in chans:
-            text += f"   • <code>{ch}</code>\n"
-        await message.edit(text)
-
+    # ═══════════════════════════════════════════
+    #  .rotate <acc> <ch_id> — Manual rotate
+    # ═══════════════════════════════════════════
     @app.on_message(cmd("rotate"))
-    async def manual_rotate(client, message):
-        from pyrogram.raw.functions.channels import UpdateUsername
+    async def rotate_cmd(client, message):
         rm = main.rotation_manager
-        if not _owner_only(message):
-            return await message.edit("❌ Owner only")
         if not rm:
-            return await message.edit("❌ Offline")
+            return await message.edit("❌ Manager offline")
+
         args = message.text.split()
         if len(args) < 3:
-            return await message.edit(f"⚠️ <code>{PREFIX}rotate sakil1 -1001234567890</code>")
+            return await message.edit(
+                f"⚠️ Usage: <code>.rotate sakil1 -1001234567890</code>"
+            )
+
         acc_name = args[1]
         try:
             ch_id = int(args[2])
         except ValueError:
             return await message.edit("❌ Invalid channel ID")
-        if acc_name not in rm.accounts:
-            return await message.edit(f"❌ Account: {acc_name}")
-        acc_conf = rm.config["accounts"].get(acc_name, {})
-        ch_conf = None
-        for c in acc_conf.get("channels", []):
-            if c["channel_id"] == ch_id:
-                ch_conf = c
-                break
-        if not ch_conf:
-            return await message.edit("❌ Channel not in config")
-        await message.edit(f"🔄 Rotating {acc_name}/{ch_id}...")
-        pool = ch_conf["pool"]
-        client_obj = rm.accounts[acc_name]
-        key = (acc_name, ch_id)
-        idx = rm.indexes.get(key, 0)
-        new_username = pool[idx % len(pool)]
-        try:
-            chat = await client_obj.get_chat(ch_id)
-            peer = await client_obj.resolve_peer(chat.id)
-            await client_obj.invoke(UpdateUsername(channel=peer, username=new_username))
-            rm.indexes[key] = (idx + 1) % len(pool)
-            await message.edit(f"✅ Rotated to @{new_username}")
-        except Exception as e:
-            await message.edit(f"❌ <code>{e}</code>")
 
+        await message.edit(f"🔄 Rotating {acc_name} / {ch_id}...")
+
+        ok, result = await rm.rotate_once(acc_name, ch_id)
+
+        if ok:
+            await message.edit(f"✅ <b>Rotated to @{result}</b>")
+        else:
+            await message.edit(f"❌ <b>Failed:</b>\n<code>{result}</code>")
+
+    # ═══════════════════════════════════════════
+    #  .reload — Reload config
+    # ═══════════════════════════════════════════
     @app.on_message(cmd("reload"))
     async def reload_cmd(client, message):
         rm = main.rotation_manager
+        if not rm:
+            return await message.edit("❌ Manager offline")
         if not _owner_only(message):
             return await message.edit("❌ Owner only")
-        if not rm:
-            return await message.edit("❌ Offline")
+
         await message.edit("🔄 Reloading...")
-        try:
-            await rm.stop_all()
-            await rm.start_all()
-            await message.edit(
-                f"✅ <b>Reloaded!</b>\n\n"
-                f"👥 Accounts: <code>{len(rm.accounts)}</code>\n"
-                f"📢 Channels: <code>{len(rm.tasks)}</code>"
-            )
-        except Exception as e:
-            await message.edit(f"❌ <code>{e}</code>")
 
-    @app.on_message(cmd("stop"))
-    async def stop_cmd(client, message):
-        rm = main.rotation_manager
-        if not _owner_only(message):
-            return await message.edit("❌ Owner only")
-        if not rm:
-            return await message.edit("❌ Offline")
-        await rm.stop_all()
-        await message.edit("🛑 <b>All rotations stopped</b>")
+        # Remember which accounts were running
+        running = rm.get_running_accounts()
 
-    @app.on_message(cmd("restart"))
-    async def restart_cmd(client, message):
-        import os, sys
-        if not _owner_only(message):
-            return await message.edit("❌ Owner only")
-        await message.edit("♻️ <b>Restarting...</b>")
-        os.execv(sys.executable, [sys.executable] + sys.argv)
+        await rm.shutdown_all()
+        await rm.load_accounts()
 
-    @app.on_message(cmd("encrypt"))
-    async def encrypt_cmd(client, message):
-        from core.session_vault import SessionVault
-        args = message.text.split(None, 1)
-        if len(args) < 2:
-            return await message.edit("⚠️ <code>.encrypt session_string</code>")
-        try:
-            locked = SessionVault().lock(args[1].strip())
-            await message.edit(f"🔐 <b>Encrypted:</b>\n<code>{locked}</code>")
-        except Exception as e:
-            await message.edit(f"❌ <code>{e}</code>")
+        # Restart previously running
+        restarted = 0
+        for acc in running:
+            ok, _ = await rm.start_account(acc)
+            if ok:
+                restarted += 1
 
-    @app.on_message(cmd("decrypt"))
-    async def decrypt_cmd(client, message):
-        from core.session_vault import SessionVault
-        if not _owner_only(message):
-            return await message.edit("❌ Owner only")
-        args = message.text.split(None, 1)
-        if len(args) < 2:
-            return await message.edit("⚠️ <code>.decrypt encrypted_string</code>")
-        try:
-            plain = SessionVault().unlock(args[1].strip())
-            await message.edit(f"🔓 <b>Decrypted:</b>\n<code>{plain}</code>")
-        except Exception as e:
-            await message.edit(f"❌ <code>{e}</code>")
-
-    @app.on_message(cmd("ping"))
-    async def ping_cmd(client, message):
-        import time
-        t1 = time.time()
-        msg = await message.edit("🏓 Pong...")
-        t2 = time.time()
-        latency = (t2 - t1) * 1000
-        m = metrics.summary()
-        await msg.edit(
-            f"🏓 <b>Pong!</b>\n\n"
-            f"⚡ <b>Latency:</b> <code>{latency:.2f}ms</code>\n"
-            f"⏱ <b>Uptime:</b> <code>{m['uptime']}</code>\n"
-            f"🔄 <b>Rotations:</b> <code>{m['rotations']}</code>"
+        await message.edit(
+            f"✅ <b>Reloaded!</b>\n\n"
+            f"👥 Accounts: <code>{len(rm.accounts)}</code>\n"
+            f"🟢 Restarted: <code>{restarted}</code>"
         )
+
+    # ═══════════════════════════════════════════
+    #  .help — Commands list
+    # ═══════════════════════════════════════════
+    @app.on_message(cmd("help") | cmd("ping"))
+    async def help_cmd(client, message):
+        p = PREFIX
+        text = (
+            f"{C.PURPLE}{C.BOLD}🎮 COMMANDS{C.RESET}\n"
+            f"{C.DIM}{'─' * 42}{C.RESET}\n\n"
+
+            f"{C.PINK}🌐 GLOBAL{C.RESET}\n"
+            f"  <code>{p}start</code>     — Start ALL accounts\n"
+            f"  <code>{p}stop</code>      — Stop ALL accounts\n"
+            f"  <code>{p}status</code>    — Global status\n"
+            f"  <code>{p}list</code>      — List all accounts\n\n"
+
+            f"{C.PINK}👤 PER-ACCOUNT{C.RESET}\n"
+            f"  <code>{p}on sakil1</code>        — Start one\n"
+            f"  <code>{p}on sakil1 sakil2</code> — Start multiple\n"
+            f"  <code>{p}off sakil1</code>       — Stop one\n"
+            f"  <code>{p}off sakil1 sakil2</code>— Stop multiple\n\n"
+
+            f"{C.PINK}🔄 MANUAL{C.RESET}\n"
+            f"  <code>{p}rotate sakil1 -100...</code>\n"
+            f"  <code>{p}reload</code>    — Reload config\n\n"
+
+            f"{C.DIM}Built by Sakil 💜{C.RESET}"
+        )
+        await message.edit(text)

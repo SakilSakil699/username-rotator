@@ -4,7 +4,7 @@
       "channels": [
         {
           "channel_id": -1002461966751,
-          "interval": 120,
+          "interval": 300,
           "enabled": true,
           "_note": "ACTIVE - Friends",
           "pool": [
